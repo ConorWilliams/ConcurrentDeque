@@ -17,19 +17,19 @@ namespace riften {
 
 namespace detail {
 
-// Basic wrapper around a c-style array of atomic pointers that provides modulo load/stores. Capacity
-// must be a power of 2.
+// Basic wrapper around a c-style array of objects that provides modulo load/stores. Capacity must be a
+// power of 2.
 template <typename T> struct RingBuff {
   public:
-    explicit RingBuff(std::int64_t cap) : _cap{cap}, _mask{cap - 1}, _buff{new std::atomic<T*>[cap]} {}
+    explicit RingBuff(std::int64_t cap) : _cap{cap}, _mask{cap - 1}, _buff{new std::atomic<T>[cap]} {}
 
     std::int64_t capacity() const noexcept { return _cap; }
 
     // Relaxed store at modulo index
-    void store(std::int64_t i, T* x) noexcept { _buff[i & _mask].store(x, std::memory_order_relaxed); }
+    void store(std::int64_t i, T x) noexcept { _buff[i & _mask].store(x, std::memory_order_relaxed); }
 
     // Relaxed load at modulo index
-    T* load(std::int64_t i) const noexcept { return _buff[i & _mask].load(std::memory_order_relaxed); }
+    T load(std::int64_t i) const noexcept { return _buff[i & _mask].load(std::memory_order_relaxed); }
 
     // Allocates and returns a new ring buffer, copies elements in range [b, t) into the new buffer.
     RingBuff<T>* resize(std::int64_t b, std::int64_t t) const;
@@ -38,11 +38,11 @@ template <typename T> struct RingBuff {
     ~RingBuff() { delete[] _buff; }
 
   private:
-    std::int64_t _cap;       // Capacity of the buffer
-    std::int64_t _mask;      // Bitmask to perform modulo capacity operations
-    std::atomic<T*>* _buff;  // Actuall memory.
+    std::int64_t _cap;      // Capacity of the buffer
+    std::int64_t _mask;     // Bitmask to perform modulo capacity operations
+    std::atomic<T>* _buff;  // Actuall memory.
 
-    static_assert(std::atomic<T*>::is_always_lock_free, "");
+    static_assert(std::atomic<T>::is_always_lock_free, "");
 };
 
 template <typename T> RingBuff<T>* RingBuff<T>::resize(std::int64_t b, std::int64_t t) const {
@@ -102,11 +102,11 @@ template <typename T> class Deque {
     std::atomic<std::int64_t> _top;     // Top of deque (always >= bottop).
     std::atomic<std::int64_t> _bottom;  // Bottom of deque.
 
-    std::atomic<detail::RingBuff<T>*> _buffer;                   // Current buffer.
-    std::vector<std::unique_ptr<detail::RingBuff<T>>> _garbage;  // Store old buffers here.
+    std::atomic<detail::RingBuff<T*>*> _buffer;                   // Current buffer.
+    std::vector<std::unique_ptr<detail::RingBuff<T*>>> _garbage;  // Store old buffers here.
 
     static_assert(std::atomic<std::int64_t>::is_always_lock_free, "");
-    static_assert(std::atomic<detail::RingBuff<T>*>::is_always_lock_free, "");
+    static_assert(std::atomic<detail::RingBuff<T*>*>::is_always_lock_free, "");
 
     // Convinience aliases.
     static constexpr std::memory_order relaxed = std::memory_order_relaxed;
@@ -120,7 +120,7 @@ template <typename T> Deque<T>::Deque(std::int64_t cap) {
     assert(cap && (!(cap & (cap - 1))) && "Capacity must be a power of 2!");
     _top.store(0, relaxed);
     _bottom.store(0, relaxed);
-    _buffer.store(new detail::RingBuff<T>{cap}, relaxed);
+    _buffer.store(new detail::RingBuff<T*>{cap}, relaxed);
     _garbage.reserve(32);
 }
 
@@ -146,7 +146,7 @@ template <typename T> template <typename... Args> void Deque<T>::emplace(Args&&.
 
     std::int64_t b = _bottom.load(relaxed);
     std::int64_t t = _top.load(acquire);
-    detail::RingBuff<T>* a = _buffer.load(relaxed);
+    detail::RingBuff<T*>* a = _buffer.load(relaxed);
 
     if (a->capacity() - 1 < (b - t)) {
         // Queue is full, build a new one
@@ -168,7 +168,7 @@ template <typename T> template <typename... Args> void Deque<T>::emplace(Args&&.
 template <typename T>
 std::optional<T> Deque<T>::pop() noexcept(std::is_nothrow_move_constructible_v<T>) {
     std::int64_t b = _bottom.load(relaxed) - 1;
-    detail::RingBuff<T>* a = _buffer.load(relaxed);
+    detail::RingBuff<T*>* a = _buffer.load(relaxed);
 
     _bottom.store(b, relaxed);
     std::atomic_thread_fence(seq_cst);
