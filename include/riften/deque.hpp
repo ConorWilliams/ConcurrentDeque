@@ -17,8 +17,8 @@ namespace riften {
 
 namespace detail {
 
-// Basic wrapper around a c-style array of objects that provides modulo load/stores. Capacity must be a
-// power of 2.
+// Basic wrapper around a c-style array of atomic objects that provides modulo load/stores. Capacity must
+// be a power of 2.
 template <typename T> struct RingBuff {
   public:
     explicit RingBuff(std::int64_t cap) : _cap{cap}, _mask{cap - 1}, _buff{new std::atomic<T>[cap]} {}
