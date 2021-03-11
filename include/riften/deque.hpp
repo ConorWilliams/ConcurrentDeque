@@ -70,6 +70,12 @@ template <typename T> class Deque {
     // Constructs the deque with a given capacity the capacity of the deque (must be power of 2)
     explicit Deque(std::int64_t cap = 1024);
 
+    //  Query the size at instance of call
+    std::size_t size() const noexcept;
+
+    // Query the capacity at instance of call
+    int64_t capacity() const noexcept;
+
     // Test if empty at instance of call
     bool empty() const noexcept;
 
@@ -112,6 +118,16 @@ template <typename T> Deque<T>::Deque(std::int64_t cap) {
     _bottom.store(0, relaxed);
     _buffer.store(new detail::RingBuff<T>{cap}, relaxed);
     _garbage.reserve(32);
+}
+
+template <typename T> std::size_t Deque<T>::size() const noexcept {
+    int64_t b = _bottom.load(std::memory_order_relaxed);
+    int64_t t = _top.load(std::memory_order_relaxed);
+    return static_cast<std::size_t>(b >= t ? b - t : 0);
+}
+
+template <typename T> int64_t Deque<T>::capacity() const noexcept {
+    return _buffer.load(std::memory_order_relaxed)->capacity();
 }
 
 template <typename T> bool Deque<T>::empty() const noexcept {

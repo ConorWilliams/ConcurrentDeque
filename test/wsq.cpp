@@ -1,7 +1,9 @@
+// The contents of this file are from: https://github.com/taskflow/work-stealing-queue
+
 #include <atomic>
 #include <deque>
-#include <iostream>
 #include <queue>
+#include <random>
 #include <set>
 #include <thread>
 
@@ -12,14 +14,14 @@
 // riften::Deque tests
 // ============================================================================
 
-// Procedure: riften_test_owner
-void riften_test_owner() {
+// Procedure: wsq_test_owner
+void wsq_test_owner() {
     int64_t cap = 2;
 
     riften::Deque<int> queue(cap);
-
     std::deque<int> gold;
 
+    REQUIRE(queue.capacity() == 2);
     REQUIRE(queue.empty());
 
     for (int i = 2; i <= (1 << 16); i <<= 1) {
@@ -33,21 +35,17 @@ void riften_test_owner() {
             auto item = queue.pop();
             REQUIRE((item && *item == i - j - 1));
         }
-
         REQUIRE(!queue.pop());
 
         REQUIRE(queue.empty());
-
         for (int j = 0; j < i; ++j) {
             queue.emplace(j);
         }
 
         for (int j = 0; j < i; ++j) {
             auto item = queue.steal();
-            REQUIRE(item);
-            REQUIRE(*item == j);
+            REQUIRE((item && *item == j));
         }
-
         REQUIRE(!queue.pop());
 
         REQUIRE(queue.empty());
@@ -78,6 +76,8 @@ void riften_test_owner() {
                     gold.pop_front();
                 }
             }
+
+            REQUIRE(queue.size() == (int)gold.size());
         }
 
         while (!queue.empty()) {
@@ -87,15 +87,18 @@ void riften_test_owner() {
         }
 
         REQUIRE(gold.empty());
+
+        REQUIRE(queue.capacity() == i);
     }
 }
 
-// Procedure: riften_test_n_thieves
-void riften_test_n_thieves(int N) {
+// Procedure: wsq_test_n_thieves
+void wsq_test_n_thieves(int N) {
     int64_t cap = 2;
 
     riften::Deque<int> queue(cap);
 
+    REQUIRE(queue.capacity() == 2);
     REQUIRE(queue.empty());
 
     for (int i = 2; i <= (1 << 16); i <<= 1) {
@@ -146,6 +149,7 @@ void riften_test_n_thieves(int N) {
         }
 
         REQUIRE(queue.empty());
+        REQUIRE(queue.capacity() <= i);
 
         std::set<int> set;
 
@@ -168,46 +172,46 @@ void riften_test_n_thieves(int N) {
 }
 
 // ----------------------------------------------------------------------------
-// Testcase: RIFTENTest.Owner
+// Testcase: WSQTest.Owner
 // ----------------------------------------------------------------------------
-TEST_CASE("RIFTEN.Owner" * doctest::timeout(300)) { riften_test_owner(); }
+TEST_CASE("WSQ.Owner" * doctest::timeout(300)) { wsq_test_owner(); }
 
-// // ----------------------------------------------------------------------------
-// // Testcase: RIFTENTest.1Thief
-// // ----------------------------------------------------------------------------
-// TEST_CASE("RIFTEN.1Thief" * doctest::timeout(300)) { riften_test_n_thieves(1); }
+// ----------------------------------------------------------------------------
+// Testcase: WSQTest.1Thief
+// ----------------------------------------------------------------------------
+TEST_CASE("WSQ.1Thief" * doctest::timeout(300)) { wsq_test_n_thieves(1); }
 
-// // ----------------------------------------------------------------------------
-// // Testcase: RIFTENTest.2Thieves
-// // ----------------------------------------------------------------------------
-// TEST_CASE("RIFTEN.2Thieves" * doctest::timeout(300)) { riften_test_n_thieves(2); }
+// ----------------------------------------------------------------------------
+// Testcase: WSQTest.2Thieves
+// ----------------------------------------------------------------------------
+TEST_CASE("WSQ.2Thieves" * doctest::timeout(300)) { wsq_test_n_thieves(2); }
 
-// // ----------------------------------------------------------------------------
-// // Testcase: RIFTENTest.3Thieves
-// // ----------------------------------------------------------------------------
-// TEST_CASE("RIFTEN.3Thieves" * doctest::timeout(300)) { riften_test_n_thieves(3); }
+// ----------------------------------------------------------------------------
+// Testcase: WSQTest.3Thieves
+// ----------------------------------------------------------------------------
+TEST_CASE("WSQ.3Thieves" * doctest::timeout(300)) { wsq_test_n_thieves(3); }
 
-// // ----------------------------------------------------------------------------
-// // Testcase: RIFTENTest.4Thieves
-// // ----------------------------------------------------------------------------
-// TEST_CASE("RIFTEN.4Thieves" * doctest::timeout(300)) { riften_test_n_thieves(4); }
+// ----------------------------------------------------------------------------
+// Testcase: WSQTest.4Thieves
+// ----------------------------------------------------------------------------
+TEST_CASE("WSQ.4Thieves" * doctest::timeout(300)) { wsq_test_n_thieves(4); }
 
-// // ----------------------------------------------------------------------------
-// // Testcase: RIFTENTest.5Thieves
-// // ----------------------------------------------------------------------------
-// TEST_CASE("RIFTEN.5Thieves" * doctest::timeout(300)) { riften_test_n_thieves(5); }
+// ----------------------------------------------------------------------------
+// Testcase: WSQTest.5Thieves
+// ----------------------------------------------------------------------------
+TEST_CASE("WSQ.5Thieves" * doctest::timeout(300)) { wsq_test_n_thieves(5); }
 
-// // ----------------------------------------------------------------------------
-// // Testcase: RIFTENTest.6Thieves
-// // ----------------------------------------------------------------------------
-// TEST_CASE("RIFTEN.6Thieves" * doctest::timeout(300)) { riften_test_n_thieves(6); }
+// ----------------------------------------------------------------------------
+// Testcase: WSQTest.6Thieves
+// ----------------------------------------------------------------------------
+TEST_CASE("WSQ.6Thieves" * doctest::timeout(300)) { wsq_test_n_thieves(6); }
 
-// // ----------------------------------------------------------------------------
-// // Testcase: RIFTENTest.7Thieves
-// // ----------------------------------------------------------------------------
-// TEST_CASE("RIFTEN.7Thieves" * doctest::timeout(300)) { riften_test_n_thieves(7); }
+// ----------------------------------------------------------------------------
+// Testcase: WSQTest.7Thieves
+// ----------------------------------------------------------------------------
+TEST_CASE("WSQ.7Thieves" * doctest::timeout(300)) { wsq_test_n_thieves(7); }
 
-// // ----------------------------------------------------------------------------
-// // Testcase: RIFTENTest.8Thieves
-// // ----------------------------------------------------------------------------
-// TEST_CASE("RIFTEN.8Thieves" * doctest::timeout(300)) { riften_test_n_thieves(8); }
+// ----------------------------------------------------------------------------
+// Testcase: WSQTest.8Thieves
+// ----------------------------------------------------------------------------
+TEST_CASE("WSQ.8Thieves" * doctest::timeout(300)) { wsq_test_n_thieves(8); }
