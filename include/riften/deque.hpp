@@ -70,6 +70,10 @@ template <typename T> class Deque {
     // Constructs the deque with a given capacity the capacity of the deque (must be power of 2)
     explicit Deque(std::int64_t cap = 1024);
 
+    // Move/Copy is not supported
+    Deque(Deque const& other) = delete;
+    Deque& operator=(Deque const& other) = delete;
+
     //  Query the size at instance of call
     std::size_t size() const noexcept;
 
@@ -217,7 +221,8 @@ std::optional<T> Deque<T>::steal() noexcept(std::is_nothrow_move_constructible_v
 
 template <typename T> Deque<T>::~Deque() {
     // Cleans up all remaining items in the deque.
-    while (pop()) {
+    while (!empty()) {
+        pop();
     }
 
     delete _buffer.load();
