@@ -21,7 +21,7 @@ endif()
 
 # ---- Add dependencies ----
 
-find_package( Threads )
+find_package(Threads)
 
 include(../cmake/CPM.cmake)
 

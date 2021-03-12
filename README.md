@@ -1,5 +1,6 @@
 # `riften::Deque` 
 
+
 A bleeding-edge lock-free, single-producer multi-consumer, Chase-Lev work stealing deque as presented in the paper "Dynamic Circular Work-Stealing Deque" and further improved in the follow up paper: "Correct and Efficient Work-Stealing for Weak Memory Models". 
 
 This implementation is based on:
@@ -63,4 +64,12 @@ CPMAddPackage("gh:ConorWilliams/ConcurrentDeque#v1.0.0")
 ```
 to your `CMakeLists.txt` and you're good to go!
 
+## Tests
+
+To compile and run the tests:
+```zsh
+mkdir build && cd build
+cmake ../test
+make && make test
+```
 
