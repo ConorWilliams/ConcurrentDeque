@@ -17,11 +17,13 @@ namespace riften {
 
 namespace detail {
 
-// Basic wrapper around a c-style array of atomic objects that provides modulo load/stores. Capacity must
-// be a power of 2.
+// Basic wrapper around a c-style array of atomic objects that provides modulo load/stores. Capacity
+// must be a power of 2.
 template <typename T> struct RingBuff {
   public:
-    explicit RingBuff(std::int64_t cap) : _cap{cap}, _mask{cap - 1}, _buff{new std::atomic<T>[cap]} {}
+    explicit RingBuff(std::int64_t cap) : _cap{cap}, _mask{cap - 1} {
+        assert(cap && (!(cap & (cap - 1))) && "Capacity must be buf power of 2!");
+    }
 
     std::int64_t capacity() const noexcept { return _cap; }
 
@@ -32,26 +34,24 @@ template <typename T> struct RingBuff {
     T load(std::int64_t i) const noexcept { return _buff[i & _mask].load(std::memory_order_relaxed); }
 
     // Allocates and returns a new ring buffer, copies elements in range [b, t) into the new buffer.
-    RingBuff<T>* resize(std::int64_t b, std::int64_t t) const;
-
-    // Does not call destructor of items in the ring buffer.
-    ~RingBuff() { delete[] _buff; }
+    RingBuff<T>* resize(std::int64_t b, std::int64_t t) const {
+        RingBuff<T>* ptr = new RingBuff{2 * _cap};
+        for (std::int64_t i = t; i != b; ++i) {
+            ptr->store(i, load(i));
+        }
+        return ptr;
+    }
 
   private:
-    std::int64_t _cap;      // Capacity of the buffer
-    std::int64_t _mask;     // Bitmask to perform modulo capacity operations
-    std::atomic<T>* _buff;  // Actuall memory.
+    std::int64_t _cap;   // Capacity of the buffer
+    std::int64_t _mask;  // Bitmask to perform modulo capacity operations
 
-    static_assert(std::atomic<T>::is_always_lock_free, "");
+#if !__cpp_lib_smart_ptr_for_overwrite
+    std::unique_ptr<std::atomic<T>[]> _buff = std::make_unique<std::atomic<T>[]>(_cap);
+#else
+    std::unique_ptr<std::atomic<T>[]> _buff = std::make_unique_for_overwrite<std::atomic<T>[]>(_cap);
+#endif
 };
-
-template <typename T> RingBuff<T>* RingBuff<T>::resize(std::int64_t b, std::int64_t t) const {
-    RingBuff<T>* ptr = new RingBuff{2 * _cap};
-    for (std::int64_t i = t; i != b; ++i) {
-        ptr->store(i, load(i));
-    }
-    return ptr;
-}
 
 }  // namespace detail
 
@@ -60,7 +60,8 @@ template <typename T> RingBuff<T>* RingBuff<T>::resize(std::int64_t b, std::int6
 // stack. Others can (only) steal data from the deque, they see a FIFO queue. All threads must have
 // finished using the deque before it is destructed.
 //
-// Deque provides the strong exception garantee for all its methods.
+// When is_nothrow_move_constructible_v<T> == true, Deque provides the strong exception garantee for all
+// its methods.
 //
 // Currently all enqued objects get (individually) allocated on the stack. For types, `T`, that have
 // `std::atomic<T>::is_always_lock_free && std::is_trivially_destructible_v<T> == true` this is an
@@ -116,50 +117,39 @@ template <typename T> class Deque {
     static constexpr std::memory_order seq_cst = std::memory_order_seq_cst;
 };
 
-template <typename T> Deque<T>::Deque(std::int64_t cap) {
-    assert(cap && (!(cap & (cap - 1))) && "Capacity must be a power of 2!");
-    _top.store(0, relaxed);
-    _bottom.store(0, relaxed);
-    _buffer.store(new detail::RingBuff<T*>{cap}, relaxed);
+template <typename T> Deque<T>::Deque(std::int64_t cap)
+    : _top(0), _bottom(0), _buffer(new detail::RingBuff<T*>{cap}) {
     _garbage.reserve(32);
 }
 
 template <typename T> std::size_t Deque<T>::size() const noexcept {
-    int64_t b = _bottom.load(std::memory_order_relaxed);
-    int64_t t = _top.load(std::memory_order_relaxed);
+    int64_t b = _bottom.load(relaxed);
+    int64_t t = _top.load(relaxed);
     return static_cast<std::size_t>(b >= t ? b - t : 0);
 }
 
 template <typename T> int64_t Deque<T>::capacity() const noexcept {
-    return _buffer.load(std::memory_order_relaxed)->capacity();
+    return _buffer.load(relaxed)->capacity();
 }
 
-template <typename T> bool Deque<T>::empty() const noexcept {
-    int64_t b = _bottom.load(std::memory_order_relaxed);
-    int64_t t = _top.load(std::memory_order_relaxed);
-    return b <= t;
-}
+template <typename T> bool Deque<T>::empty() const noexcept { return !size(); }
 
 template <typename T> template <typename... Args> void Deque<T>::emplace(Args&&... args) {
     // Construct new object
-    T* x = new T(std::forward<Args>(args)...);
+    auto x = std::make_unique<T>(std::forward<Args>(args)...);
 
     std::int64_t b = _bottom.load(relaxed);
     std::int64_t t = _top.load(acquire);
-    detail::RingBuff<T*>* a = _buffer.load(relaxed);
+    detail::RingBuff<T*>* buf = _buffer.load(relaxed);
 
-    if (a->capacity() - 1 < (b - t)) {
+    if (buf->capacity() < (b - t) + 1) {
         // Queue is full, build a new one
-        try {
-            _garbage.emplace_back(std::exchange(a, a->resize(b, t)));
-        } catch (...) {
-            // If emplace_back or resize throws; clean-up and rethrow
-            delete x;
-            throw;
-        }
-        _buffer.store(a, relaxed);
+        _garbage.emplace_back(std::exchange(buf, buf->resize(b, t)));
+        _buffer.store(buf, relaxed);
     }
-    a->store(b, x);
+
+    buf->store(b, x.get());  // Deque now owns the memory hence,
+    x.release();             // we can release.
 
     std::atomic_thread_fence(release);
     _bottom.store(b + 1, relaxed);
@@ -168,18 +158,15 @@ template <typename T> template <typename... Args> void Deque<T>::emplace(Args&&.
 template <typename T>
 std::optional<T> Deque<T>::pop() noexcept(std::is_nothrow_move_constructible_v<T>) {
     std::int64_t b = _bottom.load(relaxed) - 1;
-    detail::RingBuff<T*>* a = _buffer.load(relaxed);
-
+    detail::RingBuff<T*>* buf = _buffer.load(relaxed);
     _bottom.store(b, relaxed);
     std::atomic_thread_fence(seq_cst);
     std::int64_t t = _top.load(relaxed);
 
     if (t <= b) {
         // Non-empty deque
-        T* x = a->load(b);
-
         if (t == b) {
-            // The last item just got stolen
+            // The last item could get stolen
             if (!_top.compare_exchange_strong(t, t + 1, seq_cst, relaxed)) {
                 // Failed race.
                 _bottom.store(b + 1, relaxed);
@@ -188,6 +175,8 @@ std::optional<T> Deque<T>::pop() noexcept(std::is_nothrow_move_constructible_v<T
             _bottom.store(b + 1, relaxed);
         }
 
+        // Can delay load until after aquiring slot as only this thread can push()
+        T* x = buf->load(b);
         std::optional<T> tmp{std::move(*x)};
         delete x;
         return tmp;
@@ -204,8 +193,10 @@ std::optional<T> Deque<T>::steal() noexcept(std::is_nothrow_move_constructible_v
     std::int64_t b = _bottom.load(acquire);
 
     if (t < b) {
-        // Non-empty deque.
-        T* x = _buffer.load(consume)->load(t);
+        detail::RingBuff<T*>* buf = _buffer.load(consume);
+
+        // Must load *before* aquiring the slot as slot may be overwritten immidiatly after aquiring.
+        T* x = buf->load(t);
 
         if (!_top.compare_exchange_strong(t, t + 1, seq_cst, relaxed)) {
             // Failed race.
@@ -215,6 +206,7 @@ std::optional<T> Deque<T>::steal() noexcept(std::is_nothrow_move_constructible_v
         delete x;
         return tmp;
     } else {
+        // Empty deque.
         return std::nullopt;
     }
 }

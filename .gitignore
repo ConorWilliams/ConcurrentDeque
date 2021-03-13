@@ -4,6 +4,7 @@ build
 .clangd
 .cache
 compile_commands.json
+include/riften/old*
 
 # Prerequisites
 *.d
