@@ -71,9 +71,6 @@ template <typename T> static constexpr bool lock_free_v
 // be stored. Only the deque owner can perform pop and push operations where the deque behaves like a
 // stack. Others can (only) steal data from the deque, they see a FIFO queue. All threads must have
 // finished using the deque before it is destructed.
-//
-// When `is_nothrow_move_constructible_v<T> == true`, Deque provides the strong exception garantee for
-// all its methods.
 template <typename T> class Deque {
   public:
     // Constructs the deque with a given capacity the capacity of the deque (must be power of 2)
@@ -93,23 +90,25 @@ template <typename T> class Deque {
     bool empty() const noexcept;
 
     // Emplace an item to the deque. Only the owner thread can insert an item to the deque. The operation
-    // can trigger the deque to resize its cap if more space is required.
+    // can trigger the deque to resize its cap if more space is required. Provides the strong exception
+    // garantee.
     template <typename... Args> void emplace(Args&&... args);
 
     // Pops out an item from the deque. Only the owner thread can pop out an item from the deque. The
     // return can be a std::nullopt if this operation failed (empty deque).
-    std::optional<T> pop() noexcept(no_alloc || std::is_nothrow_move_constructible_v<T>);
+    std::optional<T> pop() noexcept;
 
     // Steals an item from the deque Any threads can try to steal an item from the deque. The return can
     // be a std::nullopt if this operation failed (not necessary empty).
-    std::optional<T> steal() noexcept(no_alloc || std::is_nothrow_move_constructible_v<T>);
+    std::optional<T> steal() noexcept;
 
     // Destruct the deque, all threads must have finished using the deque.
-    ~Deque();
+    ~Deque() noexcept;
 
-  private:
+    // If true elements of type `T` are stored directly in the ring buffer.
     static constexpr bool no_alloc = std::is_trivially_destructible_v<T> && detail::lock_free_v<T>;
 
+  private:
     using buffer_t = detail::RingBuff<std::conditional_t<no_alloc, T, T*>>;
 
     std::atomic<std::int64_t> _top;                   // Top of deque
@@ -145,7 +144,7 @@ template <typename T> bool Deque<T>::empty() const noexcept { return !size(); }
 template <typename T> template <typename... Args> void Deque<T>::emplace(Args&&... args) {
     std::int64_t b = _bottom.load(relaxed);
     std::int64_t t = _top.load(acquire);
-    auto* buf = _buffer.load(relaxed);
+    buffer_t* buf = _buffer.load(relaxed);
 
     if (buf->capacity() < (b - t) + 1) {
         // Queue is full, build a new one
@@ -164,10 +163,9 @@ template <typename T> template <typename... Args> void Deque<T>::emplace(Args&&.
     _bottom.store(b + 1, relaxed);
 }
 
-template <typename T>
-std::optional<T> Deque<T>::pop() noexcept(no_alloc || std::is_nothrow_move_constructible_v<T>) {
+template <typename T> std::optional<T> Deque<T>::pop() noexcept {
     std::int64_t b = _bottom.load(relaxed) - 1;
-    auto* buf = _buffer.load(relaxed);
+    buffer_t* buf = _buffer.load(relaxed);
     _bottom.store(b, relaxed);
     std::atomic_thread_fence(seq_cst);
     std::int64_t t = _top.load(relaxed);
@@ -201,8 +199,7 @@ std::optional<T> Deque<T>::pop() noexcept(no_alloc || std::is_nothrow_move_const
     }
 }
 
-template <typename T>
-std::optional<T> Deque<T>::steal() noexcept(no_alloc || std::is_nothrow_move_constructible_v<T>) {
+template <typename T> std::optional<T> Deque<T>::steal() noexcept {
     std::int64_t t = _top.load(acquire);
     std::atomic_thread_fence(seq_cst);
     std::int64_t b = _bottom.load(acquire);
@@ -230,7 +227,7 @@ std::optional<T> Deque<T>::steal() noexcept(no_alloc || std::is_nothrow_move_con
     }
 }
 
-template <typename T> Deque<T>::~Deque() {
+template <typename T> Deque<T>::~Deque() noexcept {
     if constexpr (!no_alloc) {
         // Clean up all remaining items in the deque.
         while (!empty()) {

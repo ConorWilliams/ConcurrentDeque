@@ -7,7 +7,7 @@ This implementation is based on:
 - https://github.com/taskflow/work-stealing-queue
 - https://github.com/ssbl/concurrent-deque
 
-This implementation places no constraint on the types which can be placed in the deque and has no memory overhead associated with buffer recycling. Furthermore, it provides the strong exception guarantee for no-throw move constructible types.
+`riften::Deque` places no constraint on the types which can be placed in the deque and has no memory overhead associated with buffer recycling. Furthermore, when possible 
 
 ## Usage
 
