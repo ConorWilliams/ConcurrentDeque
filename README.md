@@ -60,7 +60,7 @@ in your `CMakeLists.txt` file.
 The recommended way to consume this library is through [CPM.cmake](https://github.com/cpm-cmake/CPM.cmake), just add:
 
 ```CMake
-CPMAddPackage("gh:ConorWilliams/ConcurrentDeque#v1.0.0")
+CPMAddPackage("gh:ConorWilliams/ConcurrentDeque#v1.1.0")
 ```
 to your `CMakeLists.txt` and you're good to go!
 
