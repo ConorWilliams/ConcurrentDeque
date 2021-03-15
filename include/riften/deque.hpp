@@ -53,6 +53,18 @@ template <typename T> struct RingBuff {
 #endif
 };
 
+template <typename T> struct is_always_lock_free {
+    static constexpr bool value = std::atomic<T>::is_always_lock_free;
+};
+
+template <typename T> static constexpr bool lock_free_v
+    = std::conjunction_v<std::is_trivially_copyable<T>,
+                         std::is_copy_constructible<T>,
+                         std::is_move_constructible<T>,
+                         std::is_copy_assignable<T>,
+                         std::is_move_assignable<T>,
+                         is_always_lock_free<T>>;
+
 }  // namespace detail
 
 // Lock-free single-producer multiple-consumer deque. There are no constraints on the type `T` that can
@@ -60,12 +72,8 @@ template <typename T> struct RingBuff {
 // stack. Others can (only) steal data from the deque, they see a FIFO queue. All threads must have
 // finished using the deque before it is destructed.
 //
-// When is_nothrow_move_constructible_v<T> == true, Deque provides the strong exception garantee for all
-// its methods.
-//
-// Currently all enqued objects get (individually) allocated on the stack. For types, `T`, that have
-// `std::atomic<T>::is_always_lock_free && std::is_trivially_destructible_v<T> == true` this is an
-// unrequired pessimisation.
+// When `is_nothrow_move_constructible_v<T> == true`, Deque provides the strong exception garantee for
+// all its methods.
 template <typename T> class Deque {
   public:
     // Constructs the deque with a given capacity the capacity of the deque (must be power of 2)
@@ -90,24 +98,24 @@ template <typename T> class Deque {
 
     // Pops out an item from the deque. Only the owner thread can pop out an item from the deque. The
     // return can be a std::nullopt if this operation failed (empty deque).
-    std::optional<T> pop() noexcept(std::is_nothrow_move_constructible_v<T>);
+    std::optional<T> pop() noexcept(no_alloc || std::is_nothrow_move_constructible_v<T>);
 
     // Steals an item from the deque Any threads can try to steal an item from the deque. The return can
     // be a std::nullopt if this operation failed (not necessary empty).
-    std::optional<T> steal() noexcept(std::is_nothrow_move_constructible_v<T>);
+    std::optional<T> steal() noexcept(no_alloc || std::is_nothrow_move_constructible_v<T>);
 
     // Destruct the deque, all threads must have finished using the deque.
     ~Deque();
 
   private:
-    std::atomic<std::int64_t> _top;     // Top of deque (always >= bottop).
-    std::atomic<std::int64_t> _bottom;  // Bottom of deque.
+    static constexpr bool no_alloc = std::is_trivially_destructible_v<T> && detail::lock_free_v<T>;
 
-    std::atomic<detail::RingBuff<T*>*> _buffer;                   // Current buffer.
-    std::vector<std::unique_ptr<detail::RingBuff<T*>>> _garbage;  // Store old buffers here.
+    using buffer_t = detail::RingBuff<std::conditional_t<no_alloc, T, T*>>;
 
-    static_assert(std::atomic<std::int64_t>::is_always_lock_free, "");
-    static_assert(std::atomic<detail::RingBuff<T*>*>::is_always_lock_free, "");
+    std::atomic<std::int64_t> _top;                   // Top of deque
+    std::atomic<std::int64_t> _bottom;                // Bottom of deque.
+    std::atomic<buffer_t*> _buffer;                   // Current buffer.
+    std::vector<std::unique_ptr<buffer_t>> _garbage;  // Store old buffers here.
 
     // Convinience aliases.
     static constexpr std::memory_order relaxed = std::memory_order_relaxed;
@@ -118,7 +126,7 @@ template <typename T> class Deque {
 };
 
 template <typename T> Deque<T>::Deque(std::int64_t cap)
-    : _top(0), _bottom(0), _buffer(new detail::RingBuff<T*>{cap}) {
+    : _top(0), _bottom(0), _buffer(new buffer_t{cap}) {
     _garbage.reserve(32);
 }
 
@@ -135,12 +143,9 @@ template <typename T> int64_t Deque<T>::capacity() const noexcept {
 template <typename T> bool Deque<T>::empty() const noexcept { return !size(); }
 
 template <typename T> template <typename... Args> void Deque<T>::emplace(Args&&... args) {
-    // Construct new object
-    auto x = std::make_unique<T>(std::forward<Args>(args)...);
-
     std::int64_t b = _bottom.load(relaxed);
     std::int64_t t = _top.load(acquire);
-    detail::RingBuff<T*>* buf = _buffer.load(relaxed);
+    auto* buf = _buffer.load(relaxed);
 
     if (buf->capacity() < (b - t) + 1) {
         // Queue is full, build a new one
@@ -148,17 +153,21 @@ template <typename T> template <typename... Args> void Deque<T>::emplace(Args&&.
         _buffer.store(buf, relaxed);
     }
 
-    buf->store(b, x.get());  // Deque now owns the memory hence,
-    x.release();             // we can release.
+    // Construct new object
+    if constexpr (no_alloc) {
+        buf->store(b, {std::forward<Args>(args)...});
+    } else {
+        buf->store(b, new T{std::forward<Args>(args)...});
+    }
 
     std::atomic_thread_fence(release);
     _bottom.store(b + 1, relaxed);
 }
 
 template <typename T>
-std::optional<T> Deque<T>::pop() noexcept(std::is_nothrow_move_constructible_v<T>) {
+std::optional<T> Deque<T>::pop() noexcept(no_alloc || std::is_nothrow_move_constructible_v<T>) {
     std::int64_t b = _bottom.load(relaxed) - 1;
-    detail::RingBuff<T*>* buf = _buffer.load(relaxed);
+    auto* buf = _buffer.load(relaxed);
     _bottom.store(b, relaxed);
     std::atomic_thread_fence(seq_cst);
     std::int64_t t = _top.load(relaxed);
@@ -176,10 +185,16 @@ std::optional<T> Deque<T>::pop() noexcept(std::is_nothrow_move_constructible_v<T
         }
 
         // Can delay load until after aquiring slot as only this thread can push()
-        T* x = buf->load(b);
-        std::optional<T> tmp{std::move(*x)};
-        delete x;
-        return tmp;
+        auto x = buf->load(b);
+
+        if constexpr (no_alloc) {
+            return x;
+        } else {
+            std::optional tmp{std::move(*x)};
+            delete x;
+            return tmp;
+        }
+
     } else {
         _bottom.store(b + 1, relaxed);
         return std::nullopt;
@@ -187,24 +202,28 @@ std::optional<T> Deque<T>::pop() noexcept(std::is_nothrow_move_constructible_v<T
 }
 
 template <typename T>
-std::optional<T> Deque<T>::steal() noexcept(std::is_nothrow_move_constructible_v<T>) {
+std::optional<T> Deque<T>::steal() noexcept(no_alloc || std::is_nothrow_move_constructible_v<T>) {
     std::int64_t t = _top.load(acquire);
     std::atomic_thread_fence(seq_cst);
     std::int64_t b = _bottom.load(acquire);
 
     if (t < b) {
-        detail::RingBuff<T*>* buf = _buffer.load(consume);
-
         // Must load *before* aquiring the slot as slot may be overwritten immidiatly after aquiring.
-        T* x = buf->load(t);
+        auto x = _buffer.load(consume)->load(t);
 
         if (!_top.compare_exchange_strong(t, t + 1, seq_cst, relaxed)) {
             // Failed race.
             return std::nullopt;
         }
-        std::optional<T> tmp{std::move(*x)};
-        delete x;
-        return tmp;
+
+        if constexpr (no_alloc) {
+            return x;
+        } else {
+            std::optional tmp{std::move(*x)};
+            delete x;
+            return tmp;
+        }
+
     } else {
         // Empty deque.
         return std::nullopt;
@@ -212,14 +231,16 @@ std::optional<T> Deque<T>::steal() noexcept(std::is_nothrow_move_constructible_v
 }
 
 template <typename T> Deque<T>::~Deque() {
-    // Cleans up all remaining items in the deque.
-    while (!empty()) {
-        pop();
+    if constexpr (!no_alloc) {
+        // Clean up all remaining items in the deque.
+        while (!empty()) {
+            pop();
+        }
+
+        assert(empty() && "Busy during destruction");  // Check for interupts.
     }
 
     delete _buffer.load();
-
-    assert(empty() && "Busy during destruction");  // Check for interuptions.
 }
 
 }  // namespace riften
