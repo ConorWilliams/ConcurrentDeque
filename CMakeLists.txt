@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.14 FATAL_ERROR)
 # Note: update this to your new project's name and version
 project(
   RiftenDeque
-  VERSION 1.1.1
+  VERSION 1.2.0
   LANGUAGES CXX
 )
 
@@ -23,7 +23,7 @@ endif()
 
 include(cmake/CPM.cmake)
 
-CPMAddPackage("gh:TheLartians/PackageProject.cmake@1.4.1")
+CPMAddPackage("gh:TheLartians/PackageProject.cmake@1.6.0")
 
 # ---- Create library ----
 
