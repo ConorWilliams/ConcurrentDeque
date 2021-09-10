@@ -5,7 +5,7 @@ cmake_minimum_required(VERSION 3.14 FATAL_ERROR)
 # Note: update this to your new project's name and version
 project(
   RiftenDeque
-  VERSION 1.2.0
+  VERSION 2.0.0
   LANGUAGES CXX
 )
 
@@ -29,7 +29,7 @@ CPMAddPackage("gh:TheLartians/PackageProject.cmake@1.6.0")
 
 add_library(RiftenDeque INTERFACE "include/riften/deque.hpp")
 
-target_compile_features(RiftenDeque INTERFACE cxx_std_17)
+target_compile_features(RiftenDeque INTERFACE cxx_std_20)
 
 # Enforce standards conformance on MSVC
 target_compile_options(RiftenDeque INTERFACE "$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/permissive>")

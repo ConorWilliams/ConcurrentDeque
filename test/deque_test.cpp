@@ -90,7 +90,6 @@ TEST_CASE("emplace against steals, [deque]") {
 // Dummy work struct.
 struct work {
     int label;
-    std::string path;
 };
 
 TEST_CASE("pop and steal, [deque]") {
@@ -104,7 +103,7 @@ TEST_CASE("pop and steal, [deque]") {
     std::vector<std::thread> threads;
     std::atomic<int> remaining(max);
 
-    for (auto i = 0; i < max; ++i) worker.emplace(work{1, "/some/random/path"});
+    for (auto i = 0; i < max; ++i) worker.emplace(work{1});
 
     for (auto i = 0; i < nthreads; ++i) {
         threads.emplace_back([&stealer, &remaining]() {

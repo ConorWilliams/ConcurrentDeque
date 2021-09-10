@@ -7,23 +7,22 @@ This implementation is based on:
 - https://github.com/taskflow/work-stealing-queue
 - https://github.com/ssbl/concurrent-deque
 
-`riften::Deque` places no constraint on the types which can be placed in the deque and has no memory overhead associated with buffer recycling. Furthermore, when possible 
+`riften::Deque` places very few constraints on the types which can be placed in the deque (they must be trivially destructible and have nothrow move constructor/assignment operators) and has no memory overhead associated with buffer recycling. 
 
 ## Usage
 
 ```C++
-    // #include <string>
     // #include <thread>
 
     // #include "riften/deque.hpp"
 
-    // Work-stealing deque of strings
-    riften::Deque<std::string> deque;
+    // Work-stealing deque of ints
+    riften::Deque<int> deque;
 
     // One thread can push and pop items from one end (like a stack)
     std::thread owner([&]() {
         for (int i = 0; i < 10000; i = i + 1) {
-            deque.emplace(std::to_string(i));
+            deque.emplace(i);
         }
         while (!deque.empty()) {
             std::optional item = deque.pop();
