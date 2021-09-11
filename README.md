@@ -7,7 +7,7 @@ This implementation is based on:
 - https://github.com/taskflow/work-stealing-queue
 - https://github.com/ssbl/concurrent-deque
 
-`riften::Deque` places very few constraints on the types which can be placed in the deque (they must be trivially destructible and have nothrow move constructor/assignment operators) and has no memory overhead associated with buffer recycling. 
+`riften::Deque` places very few constraints on the types which can be placed in the deque (they must be default initializable, trivially destructible and have nothrow move constructor/assignment operators) and has no memory overhead associated with buffer recycling. 
 
 ## Usage
 

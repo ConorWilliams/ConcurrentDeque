@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cassert>
+#include <concepts>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
@@ -17,43 +18,46 @@
 
 namespace riften {
 
+template <typename T>
+concept Simple = std::default_initializable<T> && std::is_trivially_destructible_v<T>;
+
 namespace detail {
 
-// Basic wrapper around a c-style array of atomic objects that provides modulo load/stores. Capacity
-// must be a power of 2.
-template <typename T> struct RingBuff {
-  public:
-    explicit RingBuff(std::int64_t cap) : _cap{cap}, _mask{cap - 1} {
-        assert(cap && (!(cap & (cap - 1))) && "Capacity must be buf power of 2!");
-    }
-
-    std::int64_t capacity() const noexcept { return _cap; }
-
-    // Store at modulo index
-    void store(std::int64_t i, T&& x) noexcept requires std::is_nothrow_move_assignable_v<T> {
-        _buff[i & _mask] = std::move(x);
-    }
-
-    // Load at modulo index
-    T load(std::int64_t i) const noexcept requires std::is_nothrow_move_constructible_v<T> {
-        return _buff[i & _mask];
-    }
-
-    // Allocates and returns a new ring buffer, copies elements in range [b, t) into the new buffer.
-    RingBuff<T>* resize(std::int64_t b, std::int64_t t) const {
-        RingBuff<T>* ptr = new RingBuff{2 * _cap};
-        for (std::int64_t i = t; i != b; ++i) {
-            ptr->store(i, load(i));
+    // Basic wrapper around a c-style array of atomic objects that provides modulo load/stores. Capacity
+    // must be a power of 2.
+    template <Simple T> struct RingBuff {
+      public:
+        explicit RingBuff(std::int64_t cap) : _cap{cap}, _mask{cap - 1} {
+            assert(cap && (!(cap & (cap - 1))) && "Capacity must be buf power of 2!");
         }
-        return ptr;
-    }
 
-  private:
-    std::int64_t _cap;   // Capacity of the buffer
-    std::int64_t _mask;  // Bit mask to perform modulo capacity operations
+        std::int64_t capacity() const noexcept { return _cap; }
 
-    std::unique_ptr<T[]> _buff = std::make_unique_for_overwrite<T[]>(_cap);
-};
+        // Store (copy) at modulo index
+        void store(std::int64_t i, T&& x) noexcept requires std::is_nothrow_move_assignable_v<T> {
+            _buff[i & _mask] = std::move(x);
+        }
+
+        // Load (copy) at modulo index
+        T load(std::int64_t i) const noexcept requires std::is_nothrow_move_constructible_v<T> {
+            return _buff[i & _mask];
+        }
+
+        // Allocates and returns a new ring buffer, copies elements in range [b, t) into the new buffer.
+        RingBuff<T>* resize(std::int64_t b, std::int64_t t) const {
+            RingBuff<T>* ptr = new RingBuff{2 * _cap};
+            for (std::int64_t i = t; i != b; ++i) {
+                ptr->store(i, load(i));
+            }
+            return ptr;
+        }
+
+      private:
+        std::int64_t _cap;   // Capacity of the buffer
+        std::int64_t _mask;  // Bit mask to perform modulo capacity operations
+
+        std::unique_ptr<T[]> _buff = std::make_unique_for_overwrite<T[]>(_cap);
+    };
 
 }  // namespace detail
 
@@ -64,14 +68,11 @@ using std::hardware_destructive_interference_size;
 inline constexpr std::size_t hardware_destructive_interference_size = 2 * sizeof(std::max_align_t);
 #endif
 
-template <typename T>
-concept trivially_destructible = std::is_trivially_destructible_v<T>;
-
 // Lock-free single-producer multiple-consumer deque. Only the deque owner can perform pop and push
 // operations where the deque behaves like a stack. Others can (only) steal data from the deque, they see
 // a FIFO queue. All threads must have finished using the deque before it is destructed. T must be
-// trivially destructible and have nothrow move constructor/assignment operators.
-template <trivially_destructible T> class Deque {
+// default initializable, trivially destructible and have nothrow move constructor/assignment operators.
+template <Simple T> class Deque {
   public:
     // Constructs the deque with a given capacity the capacity of the deque (must be power of 2)
     explicit Deque(std::int64_t cap = 1024);
@@ -120,24 +121,24 @@ template <trivially_destructible T> class Deque {
     static constexpr std::memory_order seq_cst = std::memory_order_seq_cst;
 };
 
-template <trivially_destructible T> Deque<T>::Deque(std::int64_t cap)
+template <Simple T> Deque<T>::Deque(std::int64_t cap)
     : _top(0), _bottom(0), _buffer(new detail::RingBuff<T>{cap}) {
     _garbage.reserve(32);
 }
 
-template <trivially_destructible T> std::size_t Deque<T>::size() const noexcept {
+template <Simple T> std::size_t Deque<T>::size() const noexcept {
     int64_t b = _bottom.load(relaxed);
     int64_t t = _top.load(relaxed);
     return static_cast<std::size_t>(b >= t ? b - t : 0);
 }
 
-template <trivially_destructible T> int64_t Deque<T>::capacity() const noexcept {
+template <Simple T> int64_t Deque<T>::capacity() const noexcept {
     return _buffer.load(relaxed)->capacity();
 }
 
-template <trivially_destructible T> bool Deque<T>::empty() const noexcept { return !size(); }
+template <Simple T> bool Deque<T>::empty() const noexcept { return !size(); }
 
-template <trivially_destructible T> template <typename... Args> void Deque<T>::emplace(Args&&... args) {
+template <Simple T> template <typename... Args> void Deque<T>::emplace(Args&&... args) {
     // Construct before acquiring slot in-case constructor throws
     T object(std::forward<Args>(args)...);
 
@@ -159,7 +160,7 @@ template <trivially_destructible T> template <typename... Args> void Deque<T>::e
     _bottom.store(b + 1, relaxed);
 }
 
-template <trivially_destructible T> std::optional<T> Deque<T>::pop() noexcept {
+template <Simple T> std::optional<T> Deque<T>::pop() noexcept {
     std::int64_t b = _bottom.load(relaxed) - 1;
     detail::RingBuff<T>* buf = _buffer.load(relaxed);
 
@@ -190,7 +191,7 @@ template <trivially_destructible T> std::optional<T> Deque<T>::pop() noexcept {
     }
 }
 
-template <trivially_destructible T> std::optional<T> Deque<T>::steal() noexcept {
+template <Simple T> std::optional<T> Deque<T>::steal() noexcept {
     std::int64_t t = _top.load(acquire);
     std::atomic_thread_fence(seq_cst);
     std::int64_t b = _bottom.load(acquire);
@@ -216,6 +217,6 @@ template <trivially_destructible T> std::optional<T> Deque<T>::steal() noexcept 
     }
 }
 
-template <trivially_destructible T> Deque<T>::~Deque() noexcept { delete _buffer.load(); }
+template <Simple T> Deque<T>::~Deque() noexcept { delete _buffer.load(); }
 
 }  // namespace riften
